@@ -7,7 +7,7 @@ def make_parser():
     parser.add_argument("--dataset_name",
                         help="Dataset Name",
                         type=str,
-                        choices=('ogbn-products', 'ogbn-papers100M', 'uk', 'twitter'),
+                        choices=('ogbn-papers100M', 'uk', 'twitter'),
                         default='ogbn-papers100M')
 
     parser.add_argument("--dataset_root",
@@ -61,12 +61,6 @@ def make_parser():
     parser.add_argument("--train_fanouts",
                         help="Training fanouts",
                         type=int, default=[5, 10, 15], nargs="*")
-
-    parser.add_argument("--sampling_algo",
-                        help="sampling algorithm",
-                        type=str,
-                        choices=("KH",),
-                        default="KH")
 
     parser.add_argument("--CPU_batcher",
                         help="CPU batching method",

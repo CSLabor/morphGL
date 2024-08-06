@@ -1,24 +1,19 @@
 import os
 import gc
-import sys
-import dgl
-import math
 import time
 import torch
 import psutil
-import random
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
-from types import SimpleNamespace
 
 import MorphGL
 from models.gsg import SAGE
 from models.gat import GAT
 from models.gcn import GCN
 from parser import make_parser
-from loaders import load_shared_data, load_shared_data_without_reorder, construct_graph_from_arrays
 from MorphGL.iterators import prepare_salient, prepare_ducati
+from loaders import load_shared_data, construct_graph_from_arrays
 
 
 if __name__ == "__main__":
@@ -31,7 +26,6 @@ if __name__ == "__main__":
 
     # load shared data
     x, y, row, col, counts, train_idx, num_classes = load_shared_data(args.dataset_name, args.dataset_root)
-    #x, y, row, col, counts, train_idx, num_classes = load_shared_data_without_reorder(args.dataset_name, args.dataset_root)
     graph = construct_graph_from_arrays(row, col)
     train_idx = train_idx[torch.randperm(train_idx.shape[0])]
 
@@ -106,9 +100,7 @@ if __name__ == "__main__":
             if converge:
                 break
 
-    #sched_plan = ('ada_pipe', 15, 5)
     mlog(sched_plan)
-    #sys.exit()
     gc.collect()
     torch.cuda.empty_cache()
     trainer = MorphGL.Executor(input_dict, sched_plan)
