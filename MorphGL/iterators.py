@@ -1,7 +1,6 @@
 from MorphGL.utils import get_logger, get_seeds_list
 mlog = get_logger()
 
-from models.pinsage import PinSAGESampler
 from third_party.salient.fast_trainer.samplers import *
 from third_party.salient.fast_trainer.transferers import *
 from third_party.ducati import DUCATI
