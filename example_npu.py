@@ -8,13 +8,8 @@ import torch.nn as nn
 import torch.optim as optim
 
 import MorphGL
-from models.gsg import SAGE
-from models.gat import GAT
-from models.gcn import GCN
 from parser import make_parser
-from MorphGL.iterators import prepare_salient, prepare_ducati
 from loaders import load_shared_data, construct_graph_from_arrays
-
 
 if __name__ == "__main__":
     MorphGL.utils.set_seeds(0)
@@ -23,12 +18,12 @@ if __name__ == "__main__":
     cur_process = psutil.Process(os.getpid())
     mlog(f'CMDLINE: {" ".join(cur_process.cmdline())}')
     mlog(args)
+    assert args.device == 'npu'
 
-    # load shared data
+    # load data
     x, y, row, col, counts, train_idx, num_classes = load_shared_data(args.dataset_name, args.dataset_root)
     graph = construct_graph_from_arrays(row, col)
     train_idx = train_idx[torch.randperm(train_idx.shape[0])]
-
     if args.baseline in ["salient"]:
         cpu_train_idx = train_idx
         gpu_train_idx = torch.tensor([]).cuda()
@@ -40,32 +35,22 @@ if __name__ == "__main__":
         cpu_train_idx = train_idx
         gpu_train_idx = train_idx.cuda()
 
-    # prepare GPU batcher
-    gpu_loader = prepare_ducati(graph, (x, y), args.train_fanouts, 
-            gpu_train_idx, args.train_batch_size, counts, 
-            (args.total_budget, args.adj_budget, args.nfeat_budget))
+    # instantiate (1) batching operators (2) model with registration table
+    from MorphGL.registration_gpu import table as gtable
+    cpu_loader = gtable['batching']['cpu'](x, y, row, col, cpu_train_idx, 
+        args.train_batch_size, args.num_workers, args.train_fanouts[::-1])
+    gpu_loader = gtable['batching']['gpu+pcie'](graph, (x, y), args.train_fanouts, 
+        gpu_train_idx, args.train_batch_size, counts, 
+        (args.total_budget, args.adj_budget, args.nfeat_budget))
+    model = gtable['training']['gpu'](args.model, x.shape[1], args.hidden_features, num_classes, len(args.train_fanouts)).cuda()
 
-    # prepare CPU batcher
-    cpu_loader = prepare_salient(x, y, row, col, cpu_train_idx, 
-            args.train_batch_size, args.num_workers, args.train_fanouts[::-1])
-
-    # prepare model etc
-    if args.model == 'sage':
-        model = SAGE(x.shape[1], args.hidden_features, num_classes, len(args.train_fanouts)).cuda()
-    elif args.model == 'gat':
-        model = GAT(x.shape[1], args.hidden_features, num_classes, len(args.train_fanouts)).cuda()
-    elif args.model == 'gcn':
-        model = GCN(x.shape[1], args.hidden_features, num_classes, len(args.train_fanouts)).cuda()
-    else:
-        raise ValueError
     mlog(model)
     loss_fcn = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     # prepare input dict
     input_dict = {}
-    input_dict["GPU_id"] = 0
-    input_dict["CPU_cores"] = args.num_workers
+    input_dict["device"] = torch.device('cuda:0')
     input_dict["CPU_loader"] = cpu_loader
     input_dict["GPU_loader"] = gpu_loader
     input_dict["dataset"] = (x, y, row, col, graph, train_idx, num_classes)
@@ -104,7 +89,9 @@ if __name__ == "__main__":
     gc.collect()
     torch.cuda.empty_cache()
     trainer = MorphGL.Executor(input_dict, sched_plan)
-    # train
+    #################################
+    # train epochs
+    #################################
     durs = []
     for r in range(args.epochs):
         mlog(f'\n\n==============')

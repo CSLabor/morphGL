@@ -4,6 +4,11 @@ import argparse
 
 def make_parser():
     parser = argparse.ArgumentParser(description="MorphGL arguments")
+    parser.add_argument("--device",
+                        help="accelerator to use, gpu or npu",
+                        choices=('npu', 'gpu'),
+                        type=str, default='gpu')
+
     parser.add_argument("--dataset_name",
                         help="Dataset Name",
                         type=str,

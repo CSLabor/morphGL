@@ -13,7 +13,6 @@ prof_infos = None
 
 def Profiler(num_trials, input_dict):
     set_seeds(0)
-    gpu_id = input_dict["GPU_id"]
     cpu_loader = input_dict["CPU_loader"]
     gpu_loader = input_dict["GPU_loader"]
     x, y, row, col, graph_shm, train_idx, num_classes = input_dict["dataset"]
@@ -88,7 +87,7 @@ def Scheduler(oldplan, gpu_buffer_size):
     return feedback, ("ada_pipe", *sched_plan), converge
 
 def Executor(input_dict, sched_plan):
-    device = torch.device(f"cuda:{input_dict['GPU_id']}")
+    device = input_dict["device"]
     cpu_loader = input_dict["CPU_loader"]
     gpu_loader = input_dict["GPU_loader"]
     x, y, row, col, graph_shm, train_idx, num_classes = input_dict["dataset"]

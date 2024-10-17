@@ -4,6 +4,11 @@ import random
 import logging
 import numpy as np
 
+def torch_to_device_wrapper(device):
+    def func(tensor, non_blocking=False):
+        return tensor.to(device, non_blocking=non_blocking)
+    return func
+
 def get_logger(file_path=None):
     if file_path:
         logging.basicConfig(

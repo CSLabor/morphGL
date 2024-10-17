@@ -9,6 +9,35 @@ import torch
 import random
 import numpy as np
 
+def measure_npu_batching_time(num_trials, npu_loader):
+    device = torch.device(f'npu:0')
+    mlog(f"\n=======")
+    avgs = []
+    for r in range(num_trials):
+        mlog(f"Profile RUN {r} for NPU Batching")
+        gpu_iter = iter(npu_loader)
+        num_batches = gpu_iter.length
+        start_events = [torch.npu.Event(enable_timing=True) for _ in range(num_batches)]
+        end_events = [torch.npu.Event(enable_timing=True) for _ in range(num_batches)]
+        # first saturate GPU with other ops
+        m1 = torch.rand(2000,2000,device=device)
+        m2 = torch.rand(2000,2000,device=device)
+        for _ in range(30):
+            m1 = torch.matmul(m1,m2)
+        del m1, m2
+
+        # then time
+        for i in range(num_batches):
+            start_events[i].record()
+            ret = next(gpu_iter)
+            end_events[i].record()
+        torch.npu.synchronize()
+        elapsed_times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
+        #mlog(elapsed_times[:5])
+        mlog(f"{np.mean(elapsed_times):.2f} ± {np.std(elapsed_times):.2f} ms/batch")
+        avgs.append(np.mean(elapsed_times))
+    return np.mean(avgs[1:]) if len(avgs) > 1 else avgs[0]
+
 def measure_gpu_batching_time(num_trials, gpu_loader):
     """
     return average gpu batching time in ms
@@ -80,7 +109,39 @@ def measure_cpu_batching_time(num_trials, cpu_loader):
         else:
             mlog(f"Warmup finish for CPU Batching")
     return np.mean(avgs)
- 
+
+def measure_dma_transfering_time_npu(cpu_loader):
+    """
+    return DMA transferring time in ms
+    """
+    device = torch.device(f'npu:0')
+    mlog(f"\n=======")
+    mlog("measuring DMA transferring time")
+    num_batches = 50
+    saved_batches = []
+    while len(saved_batches) < num_batches:
+        cpu_iter = iter(cpu_loader)
+        for ret in cpu_iter:
+            saved_batches.append(ret)
+            if len(saved_batches) == num_batches:
+                break
+    # DMA running time is very stable (if the input is stable), so we only give one run
+    start_events = [torch.npu.Event(enable_timing=True) for _ in range(num_batches)]
+    end_events = [torch.npu.Event(enable_timing=True) for _ in range(num_batches)]
+
+    # then time
+    for i, batch in enumerate(saved_batches):
+        start_events[i].record()
+        batch.to(device, non_blocking=True)
+        end_events[i].record()
+    torch.npu.synchronize()
+
+    elapsed_times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
+    #mlog(elapsed_times[:5])
+    mlog(f"{np.mean(elapsed_times):.2f} ± {np.std(elapsed_times):.2f} ms/batch")
+    return np.mean(elapsed_times)
+
+
 def measure_dma_transfering_time(cpu_loader):
     """
     return DMA transferring time in ms
