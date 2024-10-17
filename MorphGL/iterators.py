@@ -178,5 +178,7 @@ class DUCATI_iter(Iterator):
         cpu_y = self.all_data[1][output_nodes[cpu_mask[:(ed-st)]]]
 
         # partial batch format: input_nodes, batch_size, cpu_x, cpu_y, blocks
-        return input_nodes, ed-st, cpu_x, cpu_y, blocks
+        partial_batch = (input_nodes, ed-st, cpu_x, cpu_y, blocks)
+        final_res = self.fetch_partial_batch(partial_batch)
+        return final_res
 

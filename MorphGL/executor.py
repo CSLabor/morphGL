@@ -59,11 +59,8 @@ class MorphScheduledTrainer:
         else:
             mlog('train one gpu/cpu_it batch')
 
-        if len(batch) == 3:
-            batch_x, batch_y, adjs = batch
-        else:
-            batch_x, batch_y, adjs = self.gpu_it.fetch_partial_batch(batch)
 
+        batch_x, batch_y, adjs = batch
         batch_pred = self.model(adjs, batch_x)
         loss = self.loss_fn(batch_pred, batch_y.reshape(-1))
         self.opt.zero_grad()
@@ -213,81 +210,6 @@ class MorphScheduledTrainer:
                 mlog('Hybrid: model + wait')
                 event, batch = self.gpu_buffer.popleft()
                 self.train_one_batch(batch, event)
-
-from typing import Iterator
-class AdhocPrefetcher(Iterator):
-    """
-    #FIXME: have not checked compatability
-    """
-    def __init__(self, device, cpu_it, gpu_it):
-        self.device = device
-        self.cpu_it = cpu_it
-        self.gpu_it = gpu_it
-        self.copy_stream = torch.cuda.Stream(self.device)
-
-        self.flag_cpu_end = False
-        self.flag_gpu_end = self.gpu_it.length == 0
-
-        self.next_batch = None
-        mlog(f"gpu length: {self.gpu_it.length}, cpu length: {self.cpu_it.length}")
-        self.preload()
-
-    def preload(self, cpu_blocking=False):
-        self.next_batch = None
-        if self.flag_cpu_end:
-            return
-        try:
-            if cpu_blocking:
-                batch = next(self.cpu_it)
-            else:
-                batch = self.cpu_it.try_one()
-            if batch is not None:
-                with torch.cuda.stream(self.copy_stream):
-                    self.next_batch = batch.to(self.device, non_blocking=True)
-        except StopIteration:
-            self.flag_cpu_end = True
-        except Exception as e:
-            print(e)
-            raise e
-
-    def __next__(self):
-        if self.flag_gpu_end and self.flag_cpu_end:
-            #torch.cuda.synchronize()
-            raise StopIteration
-
-        cur_stream = torch.cuda.current_stream(self.device)
-
-        # CPU batch ready, use it for training
-        if not self.flag_gpu_end and self.next_batch and self.copy_stream.query():
-            ret = self.next_batch
-            mlog(f'1cpu batch, {self.cpu_it.generated_batch}')
-            ret = convert_salient_to_dgl(ret)
-            record_batch(ret, cur_stream)
-            self.preload()
-            return ret
-
-        # either next_batch is None or transfer not finished, we first try GPU batching
-        if not self.flag_gpu_end:
-            batch = next(self.gpu_it)
-            mlog(f'1gpu batch, {self.gpu_it.idx}')
-            self.flag_gpu_end = self.gpu_it.idx == self.gpu_it.length
-            if self.next_batch is None:
-                self.preload()
-            return batch
-
-        # if GPU end, must be pure CPU batching phase
-        if not self.flag_cpu_end:
-            if self.next_batch is None:
-                self.preload(cpu_blocking=True)
-            cur_stream.wait_stream(self.copy_stream)
-            ret = self.next_batch
-            mlog(f'2cpu batch, {self.cpu_it.generated_batch}')
-            ret = convert_salient_to_dgl(ret)
-            record_batch(ret, cur_stream)
-            self.preload(cpu_blocking=True)
-            return ret
-
-
 
 from third_party.salient.fast_trainer.samplers import PreparedRawBatch
 def construct_dgl_block(raw_batch):

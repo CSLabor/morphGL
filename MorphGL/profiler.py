@@ -185,8 +185,6 @@ def measure_gpu_batching_model_time(num_trials, gpu_loader, model, loss_fn, opti
     """
     return:
     * GPU batching time
-        * partial sampling time
-        * fetching cache time
     * Model training time 
     in ms
     """
@@ -200,8 +198,6 @@ def measure_gpu_batching_model_time(num_trials, gpu_loader, model, loss_fn, opti
         start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_batches)]
         batching_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_batches)]
         end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_batches)]
-        if gpu_iter.with_cache:
-            cache_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_batches)]
         # first saturate GPU with some ops
         m1 = torch.rand(2000,2000,device=device)
         m2 = torch.rand(2000,2000,device=device)
@@ -214,9 +210,6 @@ def measure_gpu_batching_model_time(num_trials, gpu_loader, model, loss_fn, opti
             start_events[i].record()
             batch = next(gpu_iter)
             batching_events[i].record()
-            if gpu_iter.with_cache:
-                batch = gpu_iter.fetch_partial_batch(batch)
-                cache_events[i].record()
             batch_x, batch_y, adjs = batch
             batch_pred = model(adjs, batch_x)
             loss = loss_fn(batch_pred, batch_y.reshape(-1))
@@ -229,17 +222,10 @@ def measure_gpu_batching_model_time(num_trials, gpu_loader, model, loss_fn, opti
         cur_ret = []
         batching_times = [s.elapsed_time(e) for s, e in zip(start_events, batching_events)][1:]
         cur_ret.append(np.mean(batching_times))
-        if gpu_iter.with_cache:
-            cache_times = [s.elapsed_time(e) for s, e in zip(batching_events, cache_events)][1:]
-            model_times = [s.elapsed_time(e) for s, e in zip(cache_events, end_events)][1:]
-            cur_ret.append(np.mean(cache_times))
-        else:
-            model_times = [s.elapsed_time(e) for s, e in zip(batching_events, end_events)][1:]
+        model_times = [s.elapsed_time(e) for s, e in zip(batching_events, end_events)][1:]
         cur_ret.append(np.mean(model_times))
 
         mlog(f"gpu_batching: {np.mean(batching_times):.2f} ± {np.std(batching_times):.2f} ms/batch")
-        if gpu_iter.with_cache:
-            mlog(f"cache fetching: {np.mean(cache_times):.2f} ± {np.std(batching_times):.2f} ms/batch")
         mlog(f"model training: {np.mean(model_times):.2f} ± {np.std(model_times):.2f} ms/batch")
 
         avgs.append(cur_ret)

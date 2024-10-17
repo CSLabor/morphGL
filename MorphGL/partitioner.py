@@ -1,17 +1,17 @@
 import math
 from .utils import *
 
-def initial_guess(n_total, t_cpu, t_dma, t_model, t_gpu, t_cache):
+def initial_guess(n_total, t_cpu, t_dma, t_model, t_gpu):
     # initial guess, a monotone min max problem of three lines
     y1 = lambda x : x * t_cpu                                                   # CPU timeline function
     y2 = lambda x : x * t_dma + (n_total - x) * t_gpu                           # PCIe timeline function
-    y3 = lambda x : n_total * t_model + (n_total - x) * (t_gpu + t_cache)       # GPU timeline function
+    y3 = lambda x : n_total * t_model + (n_total - x) * t_gpu                   # GPU timeline function
 
     x1 = n_total * t_gpu / (t_cpu + t_gpu - t_dma)                              # cpu time = pcie time
-    x2 = n_total * (t_model + t_gpu + t_cache) / (t_gpu + t_cache + t_cpu)      # cpu time = gpu time
-    x3 = n_total * (t_model + t_cache) / (t_dma - t_cache)                      # gpu time = pcie time
+    x2 = n_total * (t_model + t_gpu) / (t_gpu + t_cpu)                          # cpu time = gpu time
+    x3 = n_total * t_model / t_dma                                              # gpu time = pcie time
 
-    record_min_time = n_total * (t_cpu + t_model + t_dma + t_gpu + t_cache)
+    record_min_time = n_total * (t_cpu + t_model + t_dma + t_gpu)
     record_n_cpu = -1
     for x in [x1, x2, x3]:
         low, high = truncate(math.floor(x), 0, n_total), truncate(math.ceil(x), 0, n_total)
