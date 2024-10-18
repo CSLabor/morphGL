@@ -9,15 +9,15 @@ from collections import deque
 
 class MorphScheduledTrainer:
     """
-    given data (CPU&GPU iterators), model, constrains (gpu&dma buffer size)
+    given batching iterators (CPU&GPU/NPU), model, constrains (gpu&dma buffer size)
     reschedule the whole training procedure
     """
     def __init__(self, device, cpu_loader, gpu_loader, model, opt, loss_fn, buffer_size, dma_size):
         """
         arguments:
-            device: the gpu
-            cpu_it: FastSamplerIter, should be derived from FastSampler or manually controlled (wrt train_idx)
-            gpu_it: DGL-UVA sampler, should be mannually controlled wrt train_idx
+            device: the gpu or npu
+            cpu_it: currently salient.fast_sampler
+            gpu_it: currently ducati.NeighborSampler with uva
             model:  the GNN model
             opt:    the optimizer
             loss_fn:   the loss function
@@ -34,6 +34,7 @@ class MorphScheduledTrainer:
 
         """
         self.device = device
+        self.torch_device_api_entry = torch.cuda if device.type == 'cuda' else torch.npu
         self.cpu_loader = cpu_loader
         self.gpu_loader = gpu_loader
         self.model = model
@@ -44,21 +45,19 @@ class MorphScheduledTrainer:
 
         self.gpu_buffer = deque()
         self.dma_buffer = deque()
-        self.copy_stream = torch.cuda.Stream(self.device)
+        self.copy_stream = self.torch_device_api_entry.Stream(self.device)
         self.next_batch = None
 
 
     def train_one_batch(self, batch, event=None):
-        cur_stream = torch.cuda.current_stream(self.device)
+        cur_stream = self.torch_device_api_entry.current_stream(self.device)
         if event is not None:
             mlog('train one cpu buffer batch')
-            # https://pytorch.org/docs/stable/generated/torch.cuda.Stream.html
             cur_stream.wait_event(event)
             batch.record_stream(cur_stream)
-            batch = construct_dgl_block(batch)
+            batch = construct_dgl_block(batch, self.device)
         else:
             mlog('train one gpu/cpu_it batch')
-
 
         batch_x, batch_y, adjs = batch
         batch_pred = self.model(adjs, batch_x)
@@ -84,11 +83,11 @@ class MorphScheduledTrainer:
             mlog('Preload: cpu batch from buffer')
             batch = self.dma_buffer.popleft()
 
-        with torch.cuda.stream(self.copy_stream):
+        with self.torch_device_api_entry.stream(self.copy_stream):
             self.next_batch = batch.to(self.device, non_blocking=True)
 
     def overlap_dma_gpu_buffer(self):
-        cur_stream = torch.cuda.current_stream(self.device)
+        cur_stream = self.torch_device_api_entry.current_stream(self.device)
         """
         **we want to flush two buffers**, but in the same time
         we try to overlap Model phase and DMA phase
@@ -123,7 +122,7 @@ class MorphScheduledTrainer:
                 ret = self.next_batch
                 self.preload_cpu(source='dma_buffer')
                 ret.record_stream(cur_stream)
-                ret = construct_dgl_block(ret)
+                ret = construct_dgl_block(ret, self.device)
                 self.train_one_batch(ret)
             return
 
@@ -139,7 +138,7 @@ class MorphScheduledTrainer:
                 if temp_flag:
                     self.copy_stream.wait_stream(cur_stream) # avoid DMA conflict with UVA on PCIE
                     temp_flag = False
-                with torch.cuda.stream(self.copy_stream):
+                with self.torch_device_api_entry.stream(self.copy_stream):
                     future_batch = cpu_batch.to(self.device, non_blocking=True)
                 future_event = self.copy_stream.record_event()
                 self.gpu_buffer.append((future_event, future_batch))
@@ -159,7 +158,7 @@ class MorphScheduledTrainer:
         self.flag_gpu_end = self.gpu_it.length == 0
 
         # then train current epoch
-        cur_stream = torch.cuda.current_stream(self.device)
+        cur_stream = self.torch_device_api_entry.current_stream(self.device)
         while not (self.flag_gpu_end and self.flag_cpu_end and len(self.dma_buffer) == 0 and len(self.gpu_buffer) == 0):
             if self.flag_gpu_end and self.flag_cpu_end: # flush two buffers
                 mlog('Flush')
@@ -182,7 +181,7 @@ class MorphScheduledTrainer:
                     ret = self.next_batch
                     self.preload_cpu(source='cpu_it')
                     ret.record_stream(cur_stream)
-                    ret = construct_dgl_block(ret)
+                    ret = construct_dgl_block(ret, self.device)
                     self.train_one_batch(ret)
                 self.overlap_dma_gpu_buffer()
                 break
@@ -212,14 +211,14 @@ class MorphScheduledTrainer:
                 self.train_one_batch(batch, event)
 
 from third_party.salient.fast_trainer.samplers import PreparedRawBatch
-def construct_dgl_block(raw_batch):
+def construct_dgl_block(raw_batch, device):
     if not isinstance(raw_batch, PreparedRawBatch):
         return raw_batch
     x, y, adjs = raw_batch
     dgl_blocks = []
     for rowptr, col, e_id, sparse_sizes in adjs:
-        dgl_adj = dgl.create_block(('csc', (rowptr, col, torch.empty((0,), dtype=torch.int64, device=torch.device('cuda:0')))), 
-            num_dst_nodes=sparse_sizes[0], num_src_nodes=sparse_sizes[1])#)#, idtype=torch.int64, device=torch.device('cuda:0'))
+        dgl_adj = dgl.create_block(('csc', (rowptr, col, torch.empty((0,), dtype=torch.int64, device=device))), 
+            num_dst_nodes=sparse_sizes[0], num_src_nodes=sparse_sizes[1])
         dgl_blocks.append(dgl_adj)
     return x, y, dgl_blocks
 

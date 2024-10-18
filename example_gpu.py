@@ -55,6 +55,7 @@ if __name__ == "__main__":
     input_dict["GPU_loader"] = gpu_loader
     input_dict["dataset"] = (x, y, row, col, graph, train_idx, num_classes)
     input_dict["model"] = (model, loss_fcn, optimizer)
+    input_dict["batch_size"] = args.train_batch_size
 
     if args.baseline.strip():
         #################################

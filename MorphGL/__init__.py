@@ -13,23 +13,33 @@ prof_infos = None
 
 def Profiler(num_trials, input_dict):
     set_seeds(0)
+    device = input_dict["device"]
     cpu_loader = input_dict["CPU_loader"]
     gpu_loader = input_dict["GPU_loader"]
     x, y, row, col, graph_shm, train_idx, num_classes = input_dict["dataset"]
     model, loss_fcn, optimizer = input_dict["model"]
-    cpu_train_idx =  gpu_train_idx = train_idx
-
+    batch_size = input_dict["batch_size"]
     global prof_infos
 
     #measure_batch_storage_size(gpu_loader)
-    avg_gpu_batching_time, avg_model_time = measure_gpu_batching_model_time(num_trials, gpu_loader, model, loss_fcn, optimizer)
-    avg_cpu_batching_time = measure_cpu_batching_time(num_trials, cpu_loader)
-    avg_dma_time = measure_dma_transfering_time(cpu_loader)
-    total_num_batches = math.ceil(train_idx.shape[0] / gpu_loader.bs)
-
-    assert prof_infos is None
-    prof_infos = avg_gpu_batching_time, avg_cpu_batching_time, avg_dma_time, avg_model_time, total_num_batches
-    mlog(f"current profs: {avg_gpu_batching_time:.2f},{avg_cpu_batching_time:.2f},{avg_dma_time:.2f},{avg_model_time:.2f},{total_num_batches}")
+    if device.type == 'npu':
+        avg_npu_batching_time = measure_npu_batching_time(num_trials, gpu_loader)
+        avg_model_time = measure_model_training_time(num_trials, device, gpu_loader, model, loss_fcn, optimizer)
+        avg_dma_time = measure_dma_transfering_to_npu_time(cpu_loader)
+        avg_cpu_batching_time = measure_cpu_batching_time(num_trials, cpu_loader)
+        total_num_batches = math.ceil(train_idx.shape[0] / batch_size)
+        assert prof_infos is None
+        prof_infos = avg_npu_batching_time, avg_cpu_batching_time, avg_dma_time, avg_model_time, total_num_batches
+        mlog(f"profs: {avg_npu_batching_time:.2f},{avg_cpu_batching_time:.2f},{avg_dma_time:.2f},{avg_model_time:.2f},{total_num_batches}")
+    else:
+        # GPU
+        avg_gpu_batching_time, avg_model_time = measure_gpu_batching_model_on_gpu_time(num_trials, gpu_loader, model, loss_fcn, optimizer)
+        avg_dma_time = measure_dma_transfering_to_gpu_time(cpu_loader)
+        avg_cpu_batching_time = measure_cpu_batching_time(num_trials, cpu_loader)
+        total_num_batches = math.ceil(train_idx.shape[0] / batch_size)
+        assert prof_infos is None
+        prof_infos = avg_gpu_batching_time, avg_cpu_batching_time, avg_dma_time, avg_model_time, total_num_batches
+        mlog(f"profs: {avg_gpu_batching_time:.2f},{avg_cpu_batching_time:.2f},{avg_dma_time:.2f},{avg_model_time:.2f},{total_num_batches}")
 
 def Partitioner(oldplan, feedback):
     """
