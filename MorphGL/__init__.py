@@ -16,9 +16,8 @@ def Profiler(num_trials, input_dict):
     device = input_dict["device"]
     cpu_loader = input_dict["CPU_loader"]
     gpu_loader = input_dict["GPU_loader"]
-    x, y, row, col, graph_shm, train_idx, num_classes = input_dict["dataset"]
     model, loss_fcn, optimizer = input_dict["model"]
-    batch_size = input_dict["batch_size"]
+    batch_size, train_idx = input_dict["batch_info"]
     global prof_infos
 
     #measure_batch_storage_size(gpu_loader)
@@ -94,8 +93,8 @@ def Executor(input_dict, sched_plan):
     device = input_dict["device"]
     cpu_loader = input_dict["CPU_loader"]
     gpu_loader = input_dict["GPU_loader"]
-    x, y, row, col, graph_shm, train_idx, num_classes = input_dict["dataset"]
     model, loss_fcn, optimizer = input_dict["model"]
+    _, train_idx = input_dict["batch_info"]
 
     pipe_type, cpu_buffer_size, gpu_buffer_size = sched_plan
 

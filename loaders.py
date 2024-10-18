@@ -90,6 +90,14 @@ def fast_reorder_to_csc(old_row, old_col, nodes_perm):
     mlog(f"fast reorder time: {time.time()-tic:.3f}s")
     return row, col
 
+def load_npu_data():
+    # a placeholder which prepares corresponding data for the dummy NPU operators
+    feat_dim = 256
+    num_classes = 100
+    train_idx = torch.arange(1024*1000)
+    return feat_dim, num_classes, train_idx
+    
+
 def load_shared_data_without_reorder(dataset_name, dataset_root):
     """
     graph topo & feature data can be shared between DUCATI, DGL, and SALIENT
@@ -192,4 +200,4 @@ def partition_train_idx(all_train_idx, ratio=0.5):
     temp_train_idx = all_train_idx[torch.randperm(all_train_idx.shape[0])]
     sep = int(all_train_idx.shape[0] * ratio)
     mlog(f"split into two part, salient {sep} : dgl {all_train_idx.shape[0]-sep}")
-    return temp_train_idx[:sep], temp_train_idx[sep:].cuda()
+    return temp_train_idx[:sep], temp_train_idx[sep:]

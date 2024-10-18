@@ -21,28 +21,23 @@ if __name__ == "__main__":
     assert args.device == 'npu'
 
     # load data
-    x, y, row, col, counts, train_idx, num_classes = load_shared_data(args.dataset_name, args.dataset_root)
-    graph = construct_graph_from_arrays(row, col)
-    train_idx = train_idx[torch.randperm(train_idx.shape[0])]
-    if args.baseline in ["salient"]:
+    feat_dim, num_classes, train_idx = load_npu_data()
+    if args.baseline in ["npu_salient"]:
         cpu_train_idx = train_idx
-        gpu_train_idx = torch.tensor([]).cuda()
-    elif args.baseline in ["ducati"]:
+        npu_train_idx = torch.tensor([]).npu()
+    elif args.baseline in ["npu_ducati"]:
         cpu_train_idx = torch.tensor([])
-        gpu_train_idx = train_idx.cuda()
+        npu_train_idx = train_idx.npu()
     else:
         assert args.baseline == ''
         cpu_train_idx = train_idx
-        gpu_train_idx = train_idx.cuda()
+        npu_train_idx = train_idx.npu()
 
     # instantiate (1) batching operators (2) model with registration table
-    from MorphGL.registration_gpu import table as gtable
-    cpu_loader = gtable['batching']['cpu'](x, y, row, col, cpu_train_idx, 
-        args.train_batch_size, args.num_workers, args.train_fanouts[::-1])
-    gpu_loader = gtable['batching']['gpu+pcie'](graph, (x, y), args.train_fanouts, 
-        gpu_train_idx, args.train_batch_size, counts, 
-        (args.total_budget, args.adj_budget, args.nfeat_budget))
-    model = gtable['training']['gpu'](args.model, x.shape[1], args.hidden_features, num_classes, len(args.train_fanouts)).cuda()
+    from MorphGL.registration_npu import table as ntable
+    cpu_loader = ntable['batching']['cpu'](cpu_train_idx, args.train_batch_size, feat_dim)
+    npu_loader = ntable['batching']['npu+pcie'](npu_train_idx, args.train_batch_size, feat_dim)
+    model = gtable['training']['npu'](args.model, feat_dim, args.hidden_features, num_classes, len(args.train_fanouts)).npu()
 
     mlog(model)
     loss_fcn = nn.CrossEntropyLoss()
@@ -50,11 +45,11 @@ if __name__ == "__main__":
 
     # prepare input dict
     input_dict = {}
-    input_dict["device"] = torch.device('cuda:0')
+    input_dict["device"] = torch.device('npu:0')
     input_dict["CPU_loader"] = cpu_loader
-    input_dict["GPU_loader"] = gpu_loader
-    input_dict["dataset"] = (x, y, row, col, graph, train_idx, num_classes)
+    input_dict["GPU_loader"] = npu_loader
     input_dict["model"] = (model, loss_fcn, optimizer)
+    input_dict["batch_info"] = (args.train_batch_size, train_idx)
 
     if args.baseline.strip():
         #################################

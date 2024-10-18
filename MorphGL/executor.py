@@ -59,9 +59,14 @@ class MorphScheduledTrainer:
         else:
             mlog('train one gpu/cpu_it batch')
 
-        batch_x, batch_y, adjs = batch
-        batch_pred = self.model(adjs, batch_x)
-        loss = self.loss_fn(batch_pred, batch_y.reshape(-1))
+        if self.device.type == 'cuda':
+            batch_x, batch_y, adjs = batch
+            batch_pred = self.model(adjs, batch_x)
+            loss = self.loss_fn(batch_pred, batch_y.reshape(-1))
+        else:
+            batch_pred = self.model(batch)
+            loss = self.loss_fn(batch_pred, torch.ones_like(batch_pred).reshape(-1))
+
         self.opt.zero_grad()
         loss.backward()
         self.opt.step()

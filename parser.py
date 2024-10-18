@@ -82,7 +82,7 @@ def make_parser():
     parser.add_argument("--baseline",
                         help="whether run baseline method",
                         type=str,
-                        choices=("", "salient", "ducati"),
+                        choices=("", "salient", "ducati", "npu_salient", "npu_ducati"),
                         default="")
 
     parser.add_argument("--model",
