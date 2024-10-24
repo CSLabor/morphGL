@@ -2,6 +2,7 @@ import os
 import gc
 import time
 import torch
+import torch_npu
 import psutil
 import numpy as np
 import torch.nn as nn
@@ -9,7 +10,7 @@ import torch.optim as optim
 
 import MorphGL
 from parser import make_parser
-from loaders import load_shared_data, construct_graph_from_arrays
+from loader_npu import load_npu_data
 
 if __name__ == "__main__":
     MorphGL.utils.set_seeds(0)
@@ -22,10 +23,10 @@ if __name__ == "__main__":
 
     # load data
     feat_dim, num_classes, train_idx = load_npu_data()
-    if args.baseline in ["npu_salient"]:
+    if args.baseline in ["salient"]:
         cpu_train_idx = train_idx
         npu_train_idx = torch.tensor([]).npu()
-    elif args.baseline in ["npu_ducati"]:
+    elif args.baseline in ["ducati"]:
         cpu_train_idx = torch.tensor([])
         npu_train_idx = train_idx.npu()
     else:
@@ -37,7 +38,7 @@ if __name__ == "__main__":
     from MorphGL.registration_npu import table as ntable
     cpu_loader = ntable['batching']['cpu'](cpu_train_idx, args.train_batch_size, feat_dim)
     npu_loader = ntable['batching']['npu+pcie'](npu_train_idx, args.train_batch_size, feat_dim)
-    model = gtable['training']['npu'](args.model, feat_dim, args.hidden_features, num_classes, len(args.train_fanouts)).npu()
+    model = ntable['training']['npu'](args.model, feat_dim, args.hidden_features, num_classes, len(args.train_fanouts)).npu()
 
     mlog(model)
     loss_fcn = nn.CrossEntropyLoss()
@@ -69,8 +70,8 @@ if __name__ == "__main__":
             MorphGL.Profiler(args.trials, input_dict)
         else:
             # use provided profiling infos
-            t_cache, t_gpu, t_cpu, t_dma, t_model, total_batches = [float(x.strip()) for x in args.profs.split(",")]
-            MorphGL.prof_infos = t_cache, t_gpu, t_cpu, t_dma, t_model, int(total_batches)
+            t_gpu, t_cpu, t_dma, t_model, total_batches = [float(x.strip()) for x in args.profs.split(",")]
+            MorphGL.prof_infos = t_gpu, t_cpu, t_dma, t_model, int(total_batches)
 
         # decide the partition and schedule plan
         partition_plan, feedback = None, None
@@ -82,7 +83,7 @@ if __name__ == "__main__":
 
     mlog(sched_plan)
     gc.collect()
-    torch.cuda.empty_cache()
+    torch.npu.empty_cache()
     trainer = MorphGL.Executor(input_dict, sched_plan)
     #################################
     # train epochs
@@ -91,13 +92,13 @@ if __name__ == "__main__":
     for r in range(args.epochs):
         mlog(f'\n\n==============')
         mlog(f'RUN {r}')
-        torch.cuda.synchronize()
+        torch.npu.synchronize()
         tic = time.time()
         trainer.train_one_epoch()
-        torch.cuda.synchronize()
+        torch.npu.synchronize()
         dur = time.time() - tic
         mlog(dur)
         durs.append(dur)
-        torch.cuda.empty_cache()
+        torch.npu.empty_cache()
     mlog(durs)
     mlog(f"averaged epoch time: {np.mean(durs[1:]):.2f} ± {np.std(durs[1:]):.2f}")

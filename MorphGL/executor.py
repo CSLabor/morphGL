@@ -3,7 +3,6 @@
 def mlog(arg):
     pass
 
-import dgl
 import torch
 from collections import deque
 
@@ -35,6 +34,8 @@ class MorphScheduledTrainer:
         """
         self.device = device
         self.torch_device_api_entry = torch.cuda if device.type == 'cuda' else torch.npu
+        if self.device.type == 'npu':
+            self.fake_y = torch.zeros(cpu_loader.bs,).long().npu()
         self.cpu_loader = cpu_loader
         self.gpu_loader = gpu_loader
         self.model = model
@@ -64,14 +65,14 @@ class MorphScheduledTrainer:
             batch_pred = self.model(adjs, batch_x)
             loss = self.loss_fn(batch_pred, batch_y.reshape(-1))
         else:
-            batch_pred = self.model(batch)
-            loss = self.loss_fn(batch_pred, torch.ones_like(batch_pred).reshape(-1))
+            batch_pred = self.model(batch)[:self.gpu_loader.bs]
+            loss = self.loss_fn(batch_pred, self.fake_y.reshape(-1))
 
         self.opt.zero_grad()
         loss.backward()
         self.opt.step()
 
-        del batch_x, batch_y, adjs, batch_pred
+        #del batch_x, batch_y, adjs, batch_pred
 
     def preload_cpu(self, source):
         assert source in ['cpu_it', 'dma_buffer']
@@ -215,6 +216,9 @@ class MorphScheduledTrainer:
                 event, batch = self.gpu_buffer.popleft()
                 self.train_one_batch(batch, event)
 
+#def construct_dgl_block(raw_batch, device):
+#    return raw_batch
+import dgl
 from third_party.salient.fast_trainer.samplers import PreparedRawBatch
 def construct_dgl_block(raw_batch, device):
     if not isinstance(raw_batch, PreparedRawBatch):
@@ -226,4 +230,3 @@ def construct_dgl_block(raw_batch, device):
             num_dst_nodes=sparse_sizes[0], num_src_nodes=sparse_sizes[1])
         dgl_blocks.append(dgl_adj)
     return x, y, dgl_blocks
-

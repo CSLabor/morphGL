@@ -1,11 +1,10 @@
 import math
-from .cache import *
 from .profiler import *
 from .partitioner import *
 from .scheduler import *
-from .executor import *
+from .executor import MorphScheduledTrainer
 from .utils import *
-from loaders import partition_train_idx
+from loader_npu import partition_train_idx
 import MorphGL
 
 mlog = MorphGL.utils.get_logger()

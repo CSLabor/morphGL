@@ -1,0 +1,58 @@
+nohup: ignoring input
+2024-10-18 17:09:33,849 CMDLINE: python example_npu.py --device npu --buffer_size 10
+2024-10-18 17:09:33,849 Namespace(device='npu', dataset_name='ogbn-papers100M', dataset_root='././datasets', profs='', num_workers=7, buffer_size=10, hidden_features=256, lr=0.003, nfeat_budget=-1, total_budget=-1, adj_budget=-1, trials=1, epochs=5, train_batch_size=1024, train_fanouts=[5, 10, 15], CPU_batcher='salient', GPU_batcher='ducati', baseline='', model='sage')
+2024-10-18 17:09:46,368 build a MLP as a model placeholder
+2024-10-18 17:09:46,379 NPU_Model(
+  (layers): ModuleList(
+    (0-1): 2 x Linear(in_features=256, out_features=256, bias=True)
+    (2): Linear(in_features=256, out_features=100, bias=True)
+  )
+)
+2024-10-18 17:09:46,383 
+=======
+2024-10-18 17:09:46,383 Profile RUN 0 for NPU Batching
+2024-10-18 17:10:58,120 70.86 ± 14.14 ms/batch
+2024-10-18 17:10:58,124 
+=======
+2024-10-18 17:10:58,124 Profile RUN 0 for Model
+2024-10-18 17:12:49,451 5.06 ± 0.03 ms/batch
+2024-10-18 17:12:49,454 
+=======
+2024-10-18 17:12:49,455 measuring DMA transferring time
+2024-10-18 17:12:54,888 8.43 ± 1.41 ms/batch
+2024-10-18 17:12:54,889 
+=======
+2024-10-18 17:12:54,889 Warmup for CPU Batching
+2024-10-18 17:13:04,989 Warmup finish for CPU Batching
+2024-10-18 17:13:04,990 Profile RUN 1 for CPU Batching 
+2024-10-18 17:14:44,993 100.00 ± 0.09 ms/batch
+2024-10-18 17:14:44,994 profs: 70.86,100.00,8.43,5.06,1000
+2024-10-18 17:14:45,027 ('ada_pipe', 7, 10)
+2024-10-18 17:14:45,397 split into two part, salient 421647 : dgl 602353
+2024-10-18 17:14:45,410 
+
+==============
+2024-10-18 17:14:45,411 RUN 0
+2024-10-18 17:15:39,016 53.60494303703308
+2024-10-18 17:15:39,074 
+
+==============
+2024-10-18 17:15:39,074 RUN 1
+2024-10-18 17:16:35,985 56.91010570526123
+2024-10-18 17:16:36,043 
+
+==============
+2024-10-18 17:16:36,043 RUN 2
+2024-10-18 17:17:35,083 59.0403048992157
+2024-10-18 17:17:35,142 
+
+==============
+2024-10-18 17:17:35,142 RUN 3
+2024-10-18 17:18:29,072 53.9290976524353
+2024-10-18 17:18:29,133 
+
+==============
+2024-10-18 17:18:29,133 RUN 4
+2024-10-18 17:19:23,514 54.38076663017273
+2024-10-18 17:19:23,576 [53.60494303703308, 56.91010570526123, 59.0403048992157, 53.9290976524353, 54.38076663017273]
+2024-10-18 17:19:23,577 averaged epoch time: 56.07 ± 2.06

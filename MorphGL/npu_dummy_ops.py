@@ -1,20 +1,31 @@
-from MorphGL.utils import get_logger
-from .iterators import Blank_iter
+from MorphGL.utils import get_logger, Blank_iter
 from typing import Iterator
 mlog = get_logger()
 
 import time
+import math
 import torch
 import torch_npu
 
 def npu_nn_wrapper(model_name, in_size, hidden_size, out_size, num_layers):
     mlog(f"build a MLP as a model placeholder")
-    layers = torch.nn.ModuleList()
-    layers.append(torch.nn.Linear(in_size, hidden_size))
-    for _ in range(num_layers-2):
-        layers.append(torch.nn.Linear(hidden_size, hidden_size))
-    layers.append(torch.nn.Linear(hidden_size, out_size))
-    return layers
+    model = NPU_Model(in_size, hidden_size, out_size, num_layers)
+    return model
+
+class NPU_Model(torch.nn.Module):
+    def __init__(self, in_size, hidden_size, out_size, num_layers):
+        super().__init__()
+        self.layers = torch.nn.ModuleList()
+        self.layers.append(torch.nn.Linear(in_size, hidden_size))
+        for _ in range(num_layers-2):
+            self.layers.append(torch.nn.Linear(hidden_size, hidden_size))
+        self.layers.append(torch.nn.Linear(hidden_size, out_size))
+
+    def forward(self, batch):
+        out = batch
+        for l in self.layers:
+            out = l(out)
+        return out
 
 def prepare_batching_cpu(train_idx, batch_size, feat_dim):
     if train_idx.shape[0] == 0:
@@ -24,14 +35,14 @@ def prepare_batching_cpu(train_idx, batch_size, feat_dim):
 def prepare_batching_npu(train_idx, batch_size, feat_dim):
     if train_idx.shape[0] == 0:
         return Blank_iter()
-    return NPU_Dummy_Batcher(idx, batch_size, feat_dim)
+    return NPU_Dummy_Batcher(train_idx, batch_size, feat_dim)
     
 class CPU_Dummy_Batcher(Iterator):
-    def __init__(self, idx, batch_size, feat_dim, per_batch_time=0.40):
+    def __init__(self, idx, batch_size, feat_dim, per_batch_time=0.10):
         self.per_batch_time = per_batch_time # time unit: s
         self.last_generation_ts = 0
         self.pos = 0
-        self.dummy_batch = torch.rand(200*1024**2/feat_dim//4, feat_dim)
+        self.dummy_batch = torch.rand((int(100*1024**2/feat_dim/4), feat_dim))
         self._idx = idx
         self.bs = batch_size
         self.length = math.ceil(idx.shape[0] / self.bs)
@@ -80,10 +91,9 @@ class CPU_Dummy_Batcher(Iterator):
 class NPU_Dummy_Batcher(Iterator):
     def __init__(self, idx, batch_size, feat_dim):
         self.device = torch.device("npu:0")
-        self.idx = idx
         self.bs = batch_size
-        self.length = math.ceil(idx.shape[0]/self.bs)
-        self.dummy_batch = torch.rand(200*1024**2/feat_dim//4, feat_dim).to(self.device)
+        self.idx = idx
+        self.dummy_batch = torch.rand((int(100*1024**2/feat_dim/4), feat_dim)).to(self.device)
         self.pos = 0
         # for placeholder computation
         self.A = torch.rand(8000, 8000).to(self.device)

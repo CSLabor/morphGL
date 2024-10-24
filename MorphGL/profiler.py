@@ -2,7 +2,6 @@ from .utils import get_logger
 mlog = get_logger()
 
 import os
-import dgl
 import math
 import time
 import torch
@@ -28,13 +27,21 @@ def measure_model_training_time(num_trials, device, gpu_loader, model, loss_fn, 
         for _ in range(30):
             m1 = torch.matmul(m1,m2)
         del m1, m2
+        fake_y = torch.zeros(gpu_iter.bs,).long().npu()
+        #mlog(f"Profile warmup finish")
 
         # then time
         for i in range(num_batches):
-            batch_x, batch_y, adjs = next(gpu_iter)
-            start_events[i].record()
-            batch_pred = model(adjs, batch_x)
-            loss = loss_fn(batch_pred, batch_y.reshape(-1))
+            if device.type == 'cuda':
+                batch_x, batch_y, adjs = next(gpu_iter)
+                start_events[i].record()
+                batch_pred = model(adjs, batch_x)
+                loss = loss_fn(batch_pred, batch_y.reshape(-1))
+            else:
+                batch = next(gpu_iter)
+                start_events[i].record()
+                batch_pred = model(batch)[:gpu_iter.bs]
+                loss = loss_fn(batch_pred, fake_y.reshape(-1))
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -63,6 +70,7 @@ def measure_npu_batching_time(num_trials, npu_loader):
         for _ in range(30):
             m1 = torch.matmul(m1,m2)
         del m1, m2
+        #mlog(f"Profile warmup finish")
 
         # then time
         for i in range(num_batches):

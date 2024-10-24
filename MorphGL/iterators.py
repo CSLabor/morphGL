@@ -1,4 +1,4 @@
-from MorphGL.utils import get_logger, get_seeds_list
+from MorphGL.utils import get_logger, get_seeds_list, Blank_iter
 mlog = get_logger()
 
 from third_party.salient.fast_trainer.samplers import *
@@ -87,19 +87,6 @@ class PreparedBatch(NamedTuple):
                 for adj in self.adjs]
         )
 
-class Blank_iter(Iterator):
-    def __init__(self):
-        self.length = 0
-
-    def __iter__(self):
-        return self
-    
-    def __next__(self):
-        raise StopIteration
-
-    def __len__(self):
-        return self.length
-       
 class DUCATI_iter(Iterator):
     def __init__(self, graph, sampler, all_data, bs, train_idx, all_cache, gpu_flag, gpu_map):
         self.graph = graph

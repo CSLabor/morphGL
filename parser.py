@@ -20,7 +20,7 @@ def make_parser():
                         type=str, default=f'{os.environ["root_dir"]}/{os.environ["USER"]}/datasets')
 
     parser.add_argument("--profs",
-                        help="existing profiling infos (t_cache, t_gpu, t_cpu, t_dma, t_model, total_batches), leave blank to re-profile",
+                        help="existing profiling infos (t_gpu, t_cpu, t_dma, t_model, total_batches), leave blank to re-profile",
                         type=str, default='')
 
     parser.add_argument("--num_workers",
@@ -82,7 +82,7 @@ def make_parser():
     parser.add_argument("--baseline",
                         help="whether run baseline method",
                         type=str,
-                        choices=("", "salient", "ducati", "npu_salient", "npu_ducati"),
+                        choices=("", "salient", "ducati"),
                         default="")
 
     parser.add_argument("--model",
