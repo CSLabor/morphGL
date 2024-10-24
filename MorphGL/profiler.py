@@ -27,7 +27,8 @@ def measure_model_training_time(num_trials, device, gpu_loader, model, loss_fn, 
         for _ in range(30):
             m1 = torch.matmul(m1,m2)
         del m1, m2
-        fake_y = torch.zeros(gpu_iter.bs,).long().npu()
+        if device.type == 'npu':
+            fake_y = torch.zeros(gpu_iter.bs,).long().npu()
         #mlog(f"Profile warmup finish")
 
         # then time
