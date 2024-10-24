@@ -1,11 +1,10 @@
 import math
-from .cache import *
 from .profiler import *
 from .partitioner import *
 from .scheduler import *
-from .executor import *
+from .executor import MorphScheduledTrainer
 from .utils import *
-from loaders import partition_train_idx
+from loader_npu import partition_train_idx
 import MorphGL
 
 mlog = MorphGL.utils.get_logger()
@@ -13,30 +12,32 @@ prof_infos = None
 
 def Profiler(num_trials, input_dict):
     set_seeds(0)
-    gpu_id = input_dict["GPU_id"]
+    device = input_dict["device"]
     cpu_loader = input_dict["CPU_loader"]
     gpu_loader = input_dict["GPU_loader"]
-    x, y, row, col, graph_shm, train_idx, num_classes = input_dict["dataset"]
     model, loss_fcn, optimizer = input_dict["model"]
-    cpu_train_idx =  gpu_train_idx = train_idx
-
+    batch_size, train_idx = input_dict["batch_info"]
     global prof_infos
 
     #measure_batch_storage_size(gpu_loader)
-    if gpu_loader.with_cache:
-        avg_gpu_batching_time, avg_cache_fetching_time, avg_model_time = measure_gpu_batching_model_time(num_trials, gpu_loader, model, loss_fcn, optimizer)
+    if device.type == 'npu':
+        avg_npu_batching_time = measure_npu_batching_time(num_trials, gpu_loader)
+        avg_model_time = measure_model_training_time(num_trials, device, gpu_loader, model, loss_fcn, optimizer)
+        avg_dma_time = measure_dma_transfering_to_npu_time(cpu_loader)
+        avg_cpu_batching_time = measure_cpu_batching_time(num_trials, cpu_loader)
+        total_num_batches = math.ceil(train_idx.shape[0] / batch_size)
+        assert prof_infos is None
+        prof_infos = avg_npu_batching_time, avg_cpu_batching_time, avg_dma_time, avg_model_time, total_num_batches
+        mlog(f"profs: {avg_npu_batching_time:.2f},{avg_cpu_batching_time:.2f},{avg_dma_time:.2f},{avg_model_time:.2f},{total_num_batches}")
     else:
-        avg_cache_fetching_time = 0.0
-        avg_gpu_batching_time = measure_gpu_batching_time(num_trials, gpu_loader)
-        avg_model_time = measure_model_training_time(num_trials, gpu_loader, model, loss_fcn, optimizer)
-
-    avg_cpu_batching_time = measure_cpu_batching_time(num_trials, cpu_loader)
-    avg_dma_time = measure_dma_transfering_time(cpu_loader)
-    total_num_batches = math.ceil(train_idx.shape[0] / gpu_loader.bs)
-
-    assert prof_infos is None
-    prof_infos = avg_cache_fetching_time, avg_gpu_batching_time, avg_cpu_batching_time, avg_dma_time, avg_model_time, total_num_batches
-    mlog(f"current profs: {avg_cache_fetching_time:.2f},{avg_gpu_batching_time:.2f},{avg_cpu_batching_time:.2f},{avg_dma_time:.2f},{avg_model_time:.2f},{total_num_batches}")
+        # GPU
+        avg_gpu_batching_time, avg_model_time = measure_gpu_batching_model_on_gpu_time(num_trials, gpu_loader, model, loss_fcn, optimizer)
+        avg_dma_time = measure_dma_transfering_to_gpu_time(cpu_loader)
+        avg_cpu_batching_time = measure_cpu_batching_time(num_trials, cpu_loader)
+        total_num_batches = math.ceil(train_idx.shape[0] / batch_size)
+        assert prof_infos is None
+        prof_infos = avg_gpu_batching_time, avg_cpu_batching_time, avg_dma_time, avg_model_time, total_num_batches
+        mlog(f"profs: {avg_gpu_batching_time:.2f},{avg_cpu_batching_time:.2f},{avg_dma_time:.2f},{avg_model_time:.2f},{total_num_batches}")
 
 def Partitioner(oldplan, feedback):
     """
@@ -44,7 +45,7 @@ def Partitioner(oldplan, feedback):
     """
     global prof_infos
     assert prof_infos is not None
-    t_cache, t_gpu, t_cpu, t_dma, t_model, n_total = prof_infos
+    t_gpu, t_cpu, t_dma, t_model, n_total = prof_infos
 
     # extreme cases, naive pipeline
     if (t_model > t_cpu and t_model > t_dma) or (t_dma > t_model and t_dma > t_cpu):
@@ -52,7 +53,7 @@ def Partitioner(oldplan, feedback):
 
     # initial guess
     if feedback is None and oldplan is None:
-        return initial_guess(n_total, t_cpu, t_dma, t_model, t_gpu, t_cache)
+        return initial_guess(n_total, t_cpu, t_dma, t_model, t_gpu)
 
     # finetune with feedback
     return tune_with_feedback(feedback, oldplan)
@@ -70,10 +71,10 @@ def Scheduler(oldplan, gpu_buffer_size):
 
     global prof_infos
     assert prof_infos is not None
-    t_cache, t_gpu, t_cpu, t_dma, t_model, n_total = prof_infos
+    t_gpu, t_cpu, t_dma, t_model, n_total = prof_infos
 
     if t_model > t_dma:
-        optim_n_cpu = int(n_total * (t_gpu + t_cache + t_model) / (t_gpu + t_cache + t_cpu))
+        optim_n_cpu = int(n_total * (t_gpu + t_model) / (t_gpu + t_cpu))
         dma_buffer_size = round(gpu_buffer_size*(optim_n_cpu)/(n_total-optim_n_cpu))
         return None, ("ada_pipe", dma_buffer_size, gpu_buffer_size), True
 
@@ -84,15 +85,15 @@ def Scheduler(oldplan, gpu_buffer_size):
         factor = cur_dma_buffer_size / gpu_buffer_size
         cur_dma_buffer_size = gpu_buffer_size
         gpu_buffer_size = round(gpu_buffer_size/factor)
-    feedback, sched_plan, converge = simulate(cur_dma_buffer_size, gpu_buffer_size, t_cpu, t_dma, t_gpu, t_model, t_cache)
+    feedback, sched_plan, converge = simulate(cur_dma_buffer_size, gpu_buffer_size, t_cpu, t_dma, t_gpu, t_model)
     return feedback, ("ada_pipe", *sched_plan), converge
 
 def Executor(input_dict, sched_plan):
-    device = torch.device(f"cuda:{input_dict['GPU_id']}")
+    device = input_dict["device"]
     cpu_loader = input_dict["CPU_loader"]
     gpu_loader = input_dict["GPU_loader"]
-    x, y, row, col, graph_shm, train_idx, num_classes = input_dict["dataset"]
     model, loss_fcn, optimizer = input_dict["model"]
+    _, train_idx = input_dict["batch_info"]
 
     pipe_type, cpu_buffer_size, gpu_buffer_size = sched_plan
 

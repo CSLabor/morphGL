@@ -4,6 +4,11 @@ import argparse
 
 def make_parser():
     parser = argparse.ArgumentParser(description="MorphGL arguments")
+    parser.add_argument("--device",
+                        help="accelerator to use, gpu or npu",
+                        choices=('npu', 'gpu'),
+                        type=str, default='gpu')
+
     parser.add_argument("--dataset_name",
                         help="Dataset Name",
                         type=str,
@@ -15,7 +20,7 @@ def make_parser():
                         type=str, default=f'{os.environ["root_dir"]}/{os.environ["USER"]}/datasets')
 
     parser.add_argument("--profs",
-                        help="existing profiling infos (t_cache, t_gpu, t_cpu, t_dma, t_model, total_batches), leave blank to re-profile",
+                        help="existing profiling infos (t_gpu, t_cpu, t_dma, t_model, total_batches), leave blank to re-profile",
                         type=str, default='')
 
     parser.add_argument("--num_workers",

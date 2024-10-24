@@ -2,7 +2,7 @@ min_makespan = 10000000
 record_plan = None
 additional_trials = 0
 
-def simulate(cpu_buffer_size, gpu_buffer_size, t_cpu, t_dma, t_uva, t_model, t_cache):
+def simulate(cpu_buffer_size, gpu_buffer_size, t_cpu, t_dma, t_uva, t_model):
     """
     simulate the executing of one "overlap"
     the training of one epoch consists of several "overlaps"
@@ -23,7 +23,7 @@ def simulate(cpu_buffer_size, gpu_buffer_size, t_cpu, t_dma, t_uva, t_model, t_c
 
     cpu_min_time = cpu_buffer_size * t_cpu
     pcie_min_time = cpu_buffer_size * t_dma + gpu_buffer_size * t_uva
-    gpu_min_time = gpu_buffer_size * (t_uva + t_cache) + (gpu_buffer_size + cpu_buffer_size) * t_model
+    gpu_min_time = gpu_buffer_size * t_uva + (gpu_buffer_size + cpu_buffer_size) * t_model
     max_makespan = 2*int(cpu_min_time + pcie_min_time + gpu_min_time)
 
     # (type, id, start_ts, end_ts)
@@ -68,14 +68,14 @@ def simulate(cpu_buffer_size, gpu_buffer_size, t_cpu, t_dma, t_uva, t_model, t_c
         # check gpu and assign model workload
         if ts > last_gpu_act[-1]:
             if last_gpu_act[0] == 'uva':
-                gpu_activities.append(("model_g", 0, last_gpu_act[-1], last_gpu_act[-1]+t_model+t_cache))
+                gpu_activities.append(("model_g", 0, last_gpu_act[-1], last_gpu_act[-1]+t_model))
                 continue
 
             if last_gpu_act[0] == "model_g":
                 cur_model_id = last_gpu_act[1] + 1
                 cur_start_ts = last_gpu_act[-1]
                 if cur_model_id <= gpu_buffer_size - 1:
-                    gpu_activities.append(("model_g", cur_model_id, cur_start_ts, cur_start_ts+t_model+t_cache))
+                    gpu_activities.append(("model_g", cur_model_id, cur_start_ts, cur_start_ts+t_model))
                     continue
 
             assert cur_model_id == gpu_buffer_size or last_gpu_act[0] == "model_c"

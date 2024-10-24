@@ -2,12 +2,87 @@ from .utils import get_logger
 mlog = get_logger()
 
 import os
-import dgl
 import math
 import time
 import torch
 import random
 import numpy as np
+
+def measure_model_training_time(num_trials, device, gpu_loader, model, loss_fn, optimizer):
+    """
+    model training time (ms) on GPU or NPU
+    """
+    torch_device_api_entry = torch.cuda if device.type == 'cuda' else torch.npu
+    avgs = []
+    mlog(f"\n=======")
+    for r in range(num_trials):
+        mlog(f"Profile RUN {r} for Model")
+        gpu_iter = iter(gpu_loader)
+        num_batches = gpu_iter.length
+        start_events = [torch_device_api_entry.Event(enable_timing=True) for _ in range(num_batches)]
+        end_events = [torch_device_api_entry.Event(enable_timing=True) for _ in range(num_batches)]
+        # first saturate GPU with some ops
+        m1 = torch.rand(2000,2000,device=device)
+        m2 = torch.rand(2000,2000,device=device)
+        for _ in range(30):
+            m1 = torch.matmul(m1,m2)
+        del m1, m2
+        fake_y = torch.zeros(gpu_iter.bs,).long().npu()
+        #mlog(f"Profile warmup finish")
+
+        # then time
+        for i in range(num_batches):
+            if device.type == 'cuda':
+                batch_x, batch_y, adjs = next(gpu_iter)
+                start_events[i].record()
+                batch_pred = model(adjs, batch_x)
+                loss = loss_fn(batch_pred, batch_y.reshape(-1))
+            else:
+                batch = next(gpu_iter)
+                start_events[i].record()
+                batch_pred = model(batch)[:gpu_iter.bs]
+                loss = loss_fn(batch_pred, fake_y.reshape(-1))
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            end_events[i].record()
+        torch_device_api_entry.synchronize()
+        elapsed_times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
+        #mlog(elapsed_times[:5])
+        elapsed_times = elapsed_times[1:]
+        mlog(f"{np.mean(elapsed_times):.2f} ± {np.std(elapsed_times):.2f} ms/batch")
+        avgs.append(np.mean(elapsed_times))
+    return np.mean(avgs)
+
+def measure_npu_batching_time(num_trials, npu_loader):
+    device = torch.device(f'npu:0')
+    mlog(f"\n=======")
+    avgs = []
+    for r in range(num_trials):
+        mlog(f"Profile RUN {r} for NPU Batching")
+        gpu_iter = iter(npu_loader)
+        num_batches = gpu_iter.length
+        start_events = [torch.npu.Event(enable_timing=True) for _ in range(num_batches)]
+        end_events = [torch.npu.Event(enable_timing=True) for _ in range(num_batches)]
+        # first saturate GPU with other ops
+        m1 = torch.rand(2000,2000,device=device)
+        m2 = torch.rand(2000,2000,device=device)
+        for _ in range(30):
+            m1 = torch.matmul(m1,m2)
+        del m1, m2
+        #mlog(f"Profile warmup finish")
+
+        # then time
+        for i in range(num_batches):
+            start_events[i].record()
+            ret = next(gpu_iter)
+            end_events[i].record()
+        torch.npu.synchronize()
+        elapsed_times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
+        #mlog(elapsed_times[:5])
+        mlog(f"{np.mean(elapsed_times):.2f} ± {np.std(elapsed_times):.2f} ms/batch")
+        avgs.append(np.mean(elapsed_times))
+    return np.mean(avgs[1:]) if len(avgs) > 1 else avgs[0]
 
 def measure_gpu_batching_time(num_trials, gpu_loader):
     """
@@ -80,8 +155,40 @@ def measure_cpu_batching_time(num_trials, cpu_loader):
         else:
             mlog(f"Warmup finish for CPU Batching")
     return np.mean(avgs)
- 
-def measure_dma_transfering_time(cpu_loader):
+
+def measure_dma_transfering_to_npu_time(cpu_loader):
+    """
+    return DMA transferring time in ms
+    """
+    device = torch.device(f'npu:0')
+    mlog(f"\n=======")
+    mlog("measuring DMA transferring time")
+    num_batches = 50
+    saved_batches = []
+    while len(saved_batches) < num_batches:
+        cpu_iter = iter(cpu_loader)
+        for ret in cpu_iter:
+            saved_batches.append(ret)
+            if len(saved_batches) == num_batches:
+                break
+    # DMA running time is very stable (if the input is stable), so we only give one run
+    start_events = [torch.npu.Event(enable_timing=True) for _ in range(num_batches)]
+    end_events = [torch.npu.Event(enable_timing=True) for _ in range(num_batches)]
+
+    # then time
+    for i, batch in enumerate(saved_batches):
+        start_events[i].record()
+        batch.to(device, non_blocking=True)
+        end_events[i].record()
+    torch.npu.synchronize()
+
+    elapsed_times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
+    #mlog(elapsed_times[:5])
+    mlog(f"{np.mean(elapsed_times):.2f} ± {np.std(elapsed_times):.2f} ms/batch")
+    return np.mean(elapsed_times)
+
+
+def measure_dma_transfering_to_gpu_time(cpu_loader):
     """
     return DMA transferring time in ms
     """
@@ -114,18 +221,11 @@ def measure_dma_transfering_time(cpu_loader):
     mlog(f"{np.mean(elapsed_times):.2f} ± {np.std(elapsed_times):.2f} ms/batch")
     return np.mean(elapsed_times)
 
-def gpu_batch_core(gpu_iter):
-    partial = next(gpu_iter)
-    if len(partial) != 3:
-        partial = gpu_iter.fetch_partial_batch(partial)
-    return partial
 
-def measure_gpu_batching_model_time(num_trials, gpu_loader, model, loss_fn, optimizer):
+def measure_gpu_batching_model_on_gpu_time(num_trials, gpu_loader, model, loss_fn, optimizer):
     """
     return:
     * GPU batching time
-        * partial sampling time
-        * fetching cache time
     * Model training time 
     in ms
     """
@@ -139,8 +239,6 @@ def measure_gpu_batching_model_time(num_trials, gpu_loader, model, loss_fn, opti
         start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_batches)]
         batching_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_batches)]
         end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_batches)]
-        if gpu_iter.with_cache:
-            cache_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_batches)]
         # first saturate GPU with some ops
         m1 = torch.rand(2000,2000,device=device)
         m2 = torch.rand(2000,2000,device=device)
@@ -153,9 +251,6 @@ def measure_gpu_batching_model_time(num_trials, gpu_loader, model, loss_fn, opti
             start_events[i].record()
             batch = next(gpu_iter)
             batching_events[i].record()
-            if gpu_iter.with_cache:
-                batch = gpu_iter.fetch_partial_batch(batch)
-                cache_events[i].record()
             batch_x, batch_y, adjs = batch
             batch_pred = model(adjs, batch_x)
             loss = loss_fn(batch_pred, batch_y.reshape(-1))
@@ -168,60 +263,15 @@ def measure_gpu_batching_model_time(num_trials, gpu_loader, model, loss_fn, opti
         cur_ret = []
         batching_times = [s.elapsed_time(e) for s, e in zip(start_events, batching_events)][1:]
         cur_ret.append(np.mean(batching_times))
-        if gpu_iter.with_cache:
-            cache_times = [s.elapsed_time(e) for s, e in zip(batching_events, cache_events)][1:]
-            model_times = [s.elapsed_time(e) for s, e in zip(cache_events, end_events)][1:]
-            cur_ret.append(np.mean(cache_times))
-        else:
-            model_times = [s.elapsed_time(e) for s, e in zip(batching_events, end_events)][1:]
+        model_times = [s.elapsed_time(e) for s, e in zip(batching_events, end_events)][1:]
         cur_ret.append(np.mean(model_times))
 
         mlog(f"gpu_batching: {np.mean(batching_times):.2f} ± {np.std(batching_times):.2f} ms/batch")
-        if gpu_iter.with_cache:
-            mlog(f"cache fetching: {np.mean(cache_times):.2f} ± {np.std(batching_times):.2f} ms/batch")
         mlog(f"model training: {np.mean(model_times):.2f} ± {np.std(model_times):.2f} ms/batch")
 
         avgs.append(cur_ret)
     return list(np.mean(avgs, axis=0))
 
-
-def measure_model_training_time(num_trials, gpu_loader, model, loss_fn, optimizer):
-    """
-    return model training time in ms
-    """
-    device = torch.device(f'cuda:0')
-    mlog(f"\n=======")
-    avgs = []
-    for r in range(num_trials):
-        mlog(f"Profile RUN {r} for Model")
-        gpu_iter = iter(gpu_loader)
-        num_batches = gpu_iter.length
-        start_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_batches)]
-        end_events = [torch.cuda.Event(enable_timing=True) for _ in range(num_batches)]
-        # first saturate GPU with some ops
-        m1 = torch.rand(2000,2000,device=device)
-        m2 = torch.rand(2000,2000,device=device)
-        for _ in range(30):
-            m1 = torch.matmul(m1,m2)
-        del m1, m2
-
-        # then time
-        for i in range(num_batches):
-            batch_x, batch_y, adjs = gpu_batch_core(gpu_iter)
-            start_events[i].record()
-            batch_pred = model(adjs, batch_x)
-            loss = loss_fn(batch_pred, batch_y.reshape(-1))
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            end_events[i].record()
-        torch.cuda.synchronize()
-        elapsed_times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
-        #mlog(elapsed_times[:5])
-        elapsed_times = elapsed_times[1:]
-        mlog(f"{np.mean(elapsed_times):.2f} ± {np.std(elapsed_times):.2f} ms/batch")
-        avgs.append(np.mean(elapsed_times))
-    return np.mean(avgs)
 
 def measure_batch_storage_size(gpu_loader):
     """
@@ -233,7 +283,7 @@ def measure_batch_storage_size(gpu_loader):
     size_in_bytes = []
     gpu_iter = iter(gpu_loader)
     for _ in range(50):
-        batch_x, batch_y, batch_adjs = gpu_batch_core(gpu_iter)
+        batch_x, batch_y, batch_adjs = next(gpu_iter)
         x_size = batch_x.element_size() * batch_x.numel()
         y_size = batch_y.element_size() * batch_y.numel()
         """

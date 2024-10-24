@@ -1,8 +1,13 @@
-import dgl
 import torch
 import random
 import logging
 import numpy as np
+from typing import Iterator
+
+def torch_to_device_wrapper(device):
+    def func(tensor, non_blocking=False):
+        return tensor.to(device, non_blocking=non_blocking)
+    return func
 
 def get_logger(file_path=None):
     if file_path:
@@ -27,6 +32,7 @@ def set_seeds(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
+    import dgl
     dgl.seed(seed)
     dgl.random.seed(seed)
 
@@ -50,4 +56,16 @@ def get_seeds_list(num_batches, bs, train_idx):
 
     return seeds_list
 
+class Blank_iter(Iterator):
+    def __init__(self):
+        self.length = 0
 
+    def __iter__(self):
+        return self
+    
+    def __next__(self):
+        raise StopIteration
+
+    def __len__(self):
+        return self.length
+ 
